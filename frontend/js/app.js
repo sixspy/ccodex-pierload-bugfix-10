@@ -57,6 +57,10 @@ createApp({
       ticket_code: "", axles_json: '[{"axle":1,"w":9},{"axle":2,"w":11},{"axle":3,"w":10}]',
     });
     const overloadOpenForm = ref({ ticket_id: 0, side_lane_note: "" });
+    const overloadCloseForm = ref({
+      hold_id: 0, note: "驳载后复磅",
+      reweigh_axles_json: '[{"axle":1,"w":12},{"axle":2,"w":12},{"axle":3,"w":12},{"axle":4,"w":12}]',
+    });
     const gateForm = ref({ ticket_id: 0, officer: "闸口值班" });
     const sealForm = ref({ ticket_id: 0, manifest: "" });
     const blForm = ref({
@@ -199,8 +203,22 @@ createApp({
     async function closeOverload(holdId) {
       clearFlash();
       try {
-        await api.closeOverload({ hold_id: holdId, note: "前端闭环" });
-        flashOk("挂起已闭"); await refresh();
+        let axles = [];
+        try {
+          axles = JSON.parse(overloadCloseForm.value.reweigh_axles_json || "[]");
+        } catch {
+          throw new Error("复磅轴重 JSON 不合法");
+        }
+        if (!Array.isArray(axles) || !axles.length) {
+          throw new Error("闭环必须提交复磅轴重以重新裁定毛重");
+        }
+        const r = await api.closeOverload({
+          hold_id: holdId,
+          note: overloadCloseForm.value.note || "前端闭环重裁",
+          reweigh_axle_weights: axles,
+        });
+        flashOk(`挂起已闭并重裁：毛重 ${r.gross_t}t（原 ${r.original_gross_t}t）`);
+        await refresh();
       } catch (e) { flashErr(e); }
     }
     async function releaseGate() {
@@ -264,7 +282,7 @@ createApp({
       dash, bridges, lanes, tickets, overloads, gateReleases, seals, blList,
       lineageEdges, customsJobs, craneJobs, bridgeDetail, ticketDetail,
       reconOne, reconAllItems, proofOne, reconCode, proofCode,
-      bridgeForm, laneForm, ticketForm, overloadOpenForm, gateForm, sealForm,
+      bridgeForm, laneForm, ticketForm, overloadOpenForm, overloadCloseForm, gateForm, sealForm,
       blForm, lineageForm, customsForm, craneForm,
       adjudicableTickets, releasableTickets, sealableTickets,
       login, logout, refresh,

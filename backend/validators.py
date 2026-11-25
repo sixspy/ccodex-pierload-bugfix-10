@@ -69,6 +69,28 @@ def validate_no_open_overload(conn, ticket_id: int) -> None:
         raise HTTPException(409, "存在开放超重挂起，不得放行")
 
 
+def gross_within_threshold(conn, ticket_id: int) -> bool:
+    """重裁口径：当前毛重必须不超车道阈值，假绿（已闭未重裁）不放行。"""
+    row = conn.execute(
+        """SELECT t.gross_t, l.overload_threshold_t
+           FROM weigh_tickets t
+           JOIN weigh_lanes l ON l.id=t.lane_id
+           WHERE t.id=?""",
+        (ticket_id,),
+    ).fetchone()
+    if not row:
+        return False
+    is_over, _ = adjudicate_overload(
+        float(row["gross_t"]), float(row["overload_threshold_t"])
+    )
+    return not is_over
+
+
+def validate_gross_readjudicated(conn, ticket_id: int) -> None:
+    if not gross_within_threshold(conn, ticket_id):
+        raise HTTPException(409, "毛重仍超阈值且未闭环重裁，按重裁口径不得放行")
+
+
 def format_manifest(ticket: dict, gross: float, generation: int) -> str:
     return (
         f"票号={ticket['ticket_code']};"

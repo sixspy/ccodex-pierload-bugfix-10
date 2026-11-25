@@ -44,6 +44,7 @@ class OverloadOpenIn(BaseModel):
 class OverloadCloseIn(BaseModel):
     hold_id: int
     note: str = ""
+    reweigh_axle_weights: list[AxleWeight] | None = None
 
 
 class GateReleaseIn(BaseModel):

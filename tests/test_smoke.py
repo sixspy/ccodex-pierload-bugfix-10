@@ -60,10 +60,23 @@ def test_weigh_overload_gate_seal_flow():
     close = c.post(
         "/api/overloads/close",
         headers=h,
-        json={"hold_id": hold["id"], "note": "驳载完成"},
+        json={
+            "hold_id": hold["id"],
+            "note": "驳载完成",
+            "reweigh_axle_weights": [
+                {"axle": 1, "w": 12.0},
+                {"axle": 2, "w": 12.0},
+                {"axle": 3, "w": 12.0},
+                {"axle": 4, "w": 12.0},
+            ],  # 48t <= 阈值49，闭环同事务重裁
+        },
     )
     assert close.status_code == 200
     assert close.json()["ticket_adjudicated"] is True
+    assert close.json()["reweigh"] is True
+    detail = c.get(f"/api/tickets/{ticket['id']}", headers=h).json()["ticket"]
+    assert float(detail["gross_t"]) == 48.0
+    assert float(detail["original_gross_t"]) == 52.0
     gate = c.post(
         "/api/gate/release",
         headers=h,

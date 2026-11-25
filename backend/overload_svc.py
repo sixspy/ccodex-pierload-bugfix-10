@@ -1,5 +1,7 @@
-"""超重挂起：旁路驳回与闭环。"""
+"""超重挂起：旁路驳回与闭环（闭环须同事务重裁毛重，甲路径）。"""
 from __future__ import annotations
+
+import json
 
 from fastapi import APIRouter, HTTPException
 
@@ -7,7 +9,13 @@ from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
 from locks import release, require_lock
 from models import OverloadCloseIn, OverloadOpenIn
-from validators import adjudicate_overload, validate_ticket_mutable
+from validators import (
+    adjudicate_overload,
+    validate_axle_count,
+    validate_axle_weights,
+    validate_gross_cap,
+    validate_ticket_mutable,
+)
 
 router = APIRouter(tags=["overload"])
 
@@ -105,11 +113,49 @@ def close_overload(body: OverloadCloseIn, authorization: AuthHeader = None):
         lock_key = f"ticket:{hold['ticket_id']}"
         require_lock(conn, lock_key, user)
         try:
+            ticket = conn.execute(
+                """SELECT t.*, l.overload_threshold_t, b.axle_limit, b.max_gross_t
+                   FROM weigh_tickets t
+                   JOIN weigh_lanes l ON l.id=t.lane_id
+                   JOIN weigh_bridges b ON b.id=l.bridge_id
+                   WHERE t.id=?""",
+                (hold["ticket_id"],),
+            ).fetchone()
+            if not ticket:
+                raise HTTPException(404, "过磅票不存在")
+            validate_ticket_mutable(dict(ticket))
+
+            # 甲路径：闭环必须带复磅轴重，同事务重裁毛重，否则整笔回滚。
+            if not body.reweigh_axle_weights:
+                raise HTTPException(422, "闭环须提交复磅轴重并重新裁定毛重")
+            axles = [a.model_dump() for a in body.reweigh_axle_weights]
+            validate_axle_count(axles, int(ticket["axle_limit"]))
+            gross, _peak, _spread = validate_axle_weights(axles)
+            validate_gross_cap(gross, float(ticket["max_gross_t"]))
+            threshold = float(hold["threshold_t"])
+            is_over, overweight = adjudicate_overload(gross, threshold)
+            if is_over:
+                # 重裁仍超：不得闭环，整笔回滚（挂起保持开放、毛重不被污染）
+                raise HTTPException(
+                    422,
+                    f"复磅毛重 {gross}t 仍超阈值 {threshold}t（超 {overweight}t），不予闭环",
+                )
+
             now = now_iso()
+            original_gross = float(ticket["gross_t"])
+            # 同一事务：关挂起、重写毛重与轴重、写新裁定，任一失败整体回滚
             conn.execute(
-                """UPDATE overload_holds SET status='已关闭', closed_at=?, side_lane_note=?
+                """UPDATE overload_holds
+                   SET status='已关闭', closed_at=?, side_lane_note=?,
+                       reweigh_gross_t=?, reweigh_axle_weights=?
                    WHERE id=?""",
-                (now, body.note, body.hold_id),
+                (
+                    now,
+                    body.note,
+                    gross,
+                    json.dumps(axles, ensure_ascii=False),
+                    body.hold_id,
+                ),
             )
             open_left = conn.execute(
                 """SELECT COUNT(*) c FROM overload_holds
@@ -117,14 +163,43 @@ def close_overload(body: OverloadCloseIn, authorization: AuthHeader = None):
                 (hold["ticket_id"],),
             ).fetchone()["c"]
             if not open_left:
-                # BUGFIX-10 埋雷：只改票态不重裁毛重
                 conn.execute(
-                    """UPDATE weigh_tickets SET status='已裁定', adjudicated_at=?
+                    """UPDATE weigh_tickets
+                       SET axle_weights=?, gross_t=?,
+                           original_gross_t=COALESCE(original_gross_t, ?),
+                           status='已裁定', adjudicated_at=?
                        WHERE id=?""",
-                    (now, hold["ticket_id"]),
+                    (
+                        json.dumps(axles, ensure_ascii=False),
+                        gross,
+                        original_gross,
+                        now,
+                        hold["ticket_id"],
+                    ),
                 )
-            write_audit(conn, user, "overload_close", hold["hold_key"], {"note": body.note, "reweigh": False})
+            write_audit(
+                conn,
+                user,
+                "overload_close",
+                hold["hold_key"],
+                {
+                    "note": body.note,
+                    "reweigh": True,
+                    "original_gross_t": original_gross,
+                    "gross_t": gross,
+                    "threshold_t": threshold,
+                    "readjudicated": not open_left,
+                },
+            )
             conn.commit()
-            return {"ok": True, "hold_id": body.hold_id, "ticket_adjudicated": not open_left}
+            return {
+                "ok": True,
+                "hold_id": body.hold_id,
+                "reweigh": True,
+                "gross_t": gross,
+                "original_gross_t": original_gross,
+                "readjudicated": not open_left,
+                "ticket_adjudicated": not open_left,
+            }
         finally:
             release(conn, lock_key, user)

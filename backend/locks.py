@@ -28,11 +28,15 @@ def try_acquire(conn, lock_key: str, holder: str) -> bool:
         return True
     if row["holder"] == holder:
         return True
-    conn.execute(
-        """INSERT INTO contention_log(lock_key,actor,action,detail,created_at)
-           VALUES (?,?,?,?,?)""",
-        (lock_key, holder, "争用", f"持有者={row['holder']}", now),
-    )
+    # 争用痕独立提交：后到请求随后抛 409 回滚业务事务，
+    # 但争用事实必须留痕，不能随业务回滚丢失。
+    with connect() as log_conn:
+        log_conn.execute(
+            """INSERT INTO contention_log(lock_key,actor,action,detail,created_at)
+               VALUES (?,?,?,?,?)""",
+            (lock_key, holder, "争用", f"持有者={row['holder']}", now),
+        )
+        log_conn.commit()
     return False
 
 

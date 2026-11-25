@@ -29,7 +29,7 @@ export const ticketsViewTemplate = `
         <td>{{ t.ticket_code }}</td>
         <td>{{ t.lane_code }}</td>
         <td>{{ t.bl_ref }}</td>
-        <td>{{ fmtT(t.gross_t) }}</td>
+        <td>{{ fmtT(t.gross_t) }}<span v-if="t.original_gross_t != null" class="muted"> / 原{{ fmtT(t.original_gross_t) }}</span></td>
         <td><span class="badge" :class="ticketClass(t.status)">{{ t.status }}</span></td>
         <td>{{ t.generation }}</td>
         <td><button class="mini-btn" @click.stop="loadTicketDetail(t.id)">详情</button></td>

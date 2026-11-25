@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS weigh_tickets(
   vehicle_plate TEXT NOT NULL,
   axle_weights TEXT NOT NULL,
   gross_t REAL NOT NULL,
+  original_gross_t REAL,
   generation INTEGER NOT NULL DEFAULT 1,
   status TEXT NOT NULL,
   adjudicated_at TEXT,
@@ -102,6 +103,8 @@ CREATE TABLE IF NOT EXISTS overload_holds(
   opened_at TEXT NOT NULL,
   closed_at TEXT,
   side_lane_note TEXT,
+  reweigh_gross_t REAL,
+  reweigh_axle_weights TEXT,
   FOREIGN KEY(ticket_id) REFERENCES weigh_tickets(id)
 );
 CREATE TABLE IF NOT EXISTS gate_releases(
@@ -439,6 +442,7 @@ def seed_lineage_samples(conn: sqlite3.Connection) -> None:
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         seed_users(conn)
         seed_bridges(conn)
         seed_lanes(conn)
@@ -449,6 +453,18 @@ def init_db() -> None:
         seed_seals_sample(conn)
         seed_lineage_samples(conn)
         conn.commit()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """对旧库补列（IF NOT EXISTS 建表不会改已存在的表）。"""
+    ticket_cols = {r["name"] for r in conn.execute("PRAGMA table_info(weigh_tickets)")}
+    if "original_gross_t" not in ticket_cols:
+        conn.execute("ALTER TABLE weigh_tickets ADD COLUMN original_gross_t REAL")
+    hold_cols = {r["name"] for r in conn.execute("PRAGMA table_info(overload_holds)")}
+    if "reweigh_gross_t" not in hold_cols:
+        conn.execute("ALTER TABLE overload_holds ADD COLUMN reweigh_gross_t REAL")
+    if "reweigh_axle_weights" not in hold_cols:
+        conn.execute("ALTER TABLE overload_holds ADD COLUMN reweigh_axle_weights TEXT")
 
 
 def dashboard_stats(conn: sqlite3.Connection) -> dict:

@@ -4,7 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from auth import AuthHeader, require_user
-from validators import validate_bl_match
+from validators import gross_within_threshold, validate_bl_match
+
 
 router = APIRouter(tags=["reconcile"])
 
@@ -43,7 +44,7 @@ def _reconcile_bl(conn, bl_code: str) -> dict:
         "SELECT * FROM bl_manifests WHERE bl_code=?", (bl_code,)
     ).fetchone()
     tickets = conn.execute(
-        """SELECT ticket_code, gross_t, status, generation FROM weigh_tickets
+        """SELECT id, ticket_code, gross_t, status, generation FROM weigh_tickets
            WHERE bl_ref=? AND status NOT IN ('作废')""",
         (bl_code,),
     ).fetchall()
@@ -53,6 +54,7 @@ def _reconcile_bl(conn, bl_code: str) -> dict:
             "declared_gross_t": bl["declared_gross_t"],
             "ticket_sum_t": 0,
             "balanced": False,
+            "gross_sound": False,
             "reason": "无过磅票",
             "tickets": [],
         }
@@ -66,14 +68,24 @@ def _reconcile_bl(conn, bl_code: str) -> dict:
         (bl_code,),
     ).fetchall()
     proof_ok = matched and len(seal_rows) >= 1
+    ticket_items = []
+    all_sound = True
+    for t in tickets:
+        d = dict(t)
+        sound = gross_within_threshold(conn, t["id"])
+        d["gross_sound"] = sound
+        all_sound = all_sound and sound
+        ticket_items.append(d)
+    proof_ok = proof_ok and all_sound
     return {
         "bl_code": bl_code,
         "declared_gross_t": declared,
         "ticket_sum_t": ticket_sum,
         "balanced": matched,
+        "gross_sound": all_sound,
         "proof_ready": proof_ok,
         "seal_count": len(seal_rows),
-        "tickets": [dict(t) for t in tickets],
+        "tickets": ticket_items,
         "seals": [dict(s) for s in seal_rows],
     }
 
@@ -109,16 +121,21 @@ def proof_ticket(ticket_code: str, authorization: AuthHeader = None):
             manifest_match = validate_bl_match(
                 float(bl["declared_gross_t"]), float(ticket["gross_t"])
             )
+        gross_sound = gross_within_threshold(conn, ticket["id"])
         return {
             "ticket_code": ticket_code,
             "bl_ref": ticket["bl_ref"],
             "gross_t": ticket["gross_t"],
+            "gross_sound": gross_sound,
             "manifest_matches_bl": manifest_match,
             "has_seal": seal is not None,
             "seal_generation": seal["ticket_generation"] if seal else None,
             "released": release is not None,
             "overload_closed": overload_closed,
             "coherent": bool(
-                manifest_match and overload_closed and (seal or release)
+                gross_sound
+                and manifest_match
+                and overload_closed
+                and (seal or release)
             ),
         }

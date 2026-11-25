@@ -1,7 +1,7 @@
 export const gateViewTemplate = `
 <section class="panel">
   <h2>闸口放行</h2>
-  <p class="hint">须票态已裁定且无开放超重挂起；旁路未闭环不得抬杆。</p>
+  <p class="hint">须票态已裁定且无开放超重挂起；按重裁口径复核毛重，已闭但毛重仍超阈值的假绿票不得抬杆，旁路未闭环不得放行。</p>
   <div class="form-row">
     <div><label>过磅票</label>
       <select v-model.number="gateForm.ticket_id">

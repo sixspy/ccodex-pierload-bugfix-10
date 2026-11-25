@@ -13,7 +13,14 @@ export const reconcileViewTemplate = `
     <div v-if="reconOne" class="detail-box">
       <p>申报 {{ reconOne.declared_gross_t }}t · 过磅合计 {{ reconOne.ticket_sum_t }}t</p>
       <p :class="reconOne.balanced ? 'ok' : 'bad'">{{ reconOne.balanced ? '账实平衡' : '偏差待查' }}</p>
+      <p :class="reconOne.gross_sound ? 'ok' : 'bad'">{{ reconOne.gross_sound ? '毛重全部过阈' : '存在毛重假绿（未闭环重裁）' }}</p>
       <p>快照数 {{ reconOne.seal_count }} · 可出证明 {{ reconOne.proof_ready ? '是' : '否' }}</p>
+      <ul v-if="reconOne.tickets && reconOne.tickets.length">
+        <li v-for="t in reconOne.tickets" :key="t.ticket_code">
+          {{ t.ticket_code }} · {{ t.gross_t }}t ·
+          <span :class="t.gross_sound ? 'ok' : 'bad'">{{ t.gross_sound ? '毛重合规' : '毛重仍超' }}</span>
+        </li>
+      </ul>
     </div>
     <ul v-if="reconAllItems.length">
       <li v-for="r in reconAllItems" :key="r.bl_code">{{ r.bl_code }} · {{ r.balanced ? '平' : '偏' }}</li>
@@ -25,6 +32,7 @@ export const reconcileViewTemplate = `
     <div class="actions"><button @click="loadProof">拉证明</button></div>
     <div v-if="proofOne" class="detail-box">
       <p>提单匹配 {{ proofOne.manifest_matches_bl ? '是' : '否' }}</p>
+      <p>毛重重裁 {{ proofOne.gross_sound ? '过阈' : '未过阈（假绿）' }}</p>
       <p>超重闭环 {{ proofOne.overload_closed ? '是' : '否' }}</p>
       <p>已放行 {{ proofOne.released ? '是' : '否' }}</p>
       <p>一致 {{ proofOne.coherent ? '是' : '否' }}</p>
